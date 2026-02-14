@@ -83,11 +83,7 @@ func (m model) Init() tea.Cmd {
 
 func (m model) runChecks() tea.Cmd {
 	return func() tea.Msg {
-		results := make([]HostStatus, len(m.config.Hosts))
-		for i, h := range m.config.Hosts {
-			results[i] = checkHost(h)
-		}
-		return checkDoneMsg{results: results}
+		return checkDoneMsg{results: checkAllHosts(m.config)}
 	}
 }
 

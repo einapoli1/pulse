@@ -18,9 +18,15 @@ type HostConfig struct {
 	Label    string `yaml:"label"`
 }
 
+type NotifyConfig struct {
+	Webhook string `yaml:"webhook"` // POST URL for state changes
+	Command string `yaml:"command"` // shell command, {host} {label} {state} replaced
+}
+
 type Config struct {
 	Interval int          `yaml:"interval"` // seconds
 	Hosts    []HostConfig `yaml:"hosts"`
+	Notify   NotifyConfig `yaml:"notify"`
 }
 
 func defaultConfigPath() string {

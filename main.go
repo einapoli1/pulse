@@ -16,6 +16,8 @@ func main() {
 	once := flag.Bool("once", false, "check once and exit (no TUI)")
 	watch := flag.Bool("watch", false, "check repeatedly without TUI")
 	jsonOut := flag.Bool("json", false, "output as JSON (with --once or --watch)")
+	web := flag.Bool("web", false, "start web dashboard")
+	webPort := flag.Int("port", 9100, "web dashboard port")
 	initFlag := flag.Bool("init", false, "create sample config file")
 	flag.Parse()
 
@@ -44,13 +46,27 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *web {
+		ws := NewWebServer(cfg, *webPort)
+		if err := ws.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "Web server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if *once || *watch {
+		tracker := NewStateTracker(cfg.Notify)
 		for {
 			results := checkAllHosts(cfg)
+			transitions := tracker.Update(results)
 			if *jsonOut {
 				printJSON(results)
 			} else {
 				printTable(results)
+			}
+			for _, t := range transitions {
+				fmt.Fprintf(os.Stderr, "⚠ %s\n", t)
 			}
 			if *once {
 				return
@@ -70,8 +86,15 @@ func main() {
 
 func checkAllHosts(cfg *Config) []HostStatus {
 	results := make([]HostStatus, len(cfg.Hosts))
+	ch := make(chan struct{ idx int; status HostStatus }, len(cfg.Hosts))
 	for i, h := range cfg.Hosts {
-		results[i] = checkHost(h)
+		go func(idx int, hc HostConfig) {
+			ch <- struct{ idx int; status HostStatus }{idx, checkHost(hc)}
+		}(i, h)
+	}
+	for range cfg.Hosts {
+		r := <-ch
+		results[r.idx] = r.status
 	}
 	return results
 }

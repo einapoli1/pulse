@@ -16,7 +16,12 @@ Jack (and I) manage several machines — Arch PC, Ubuntu VM, Raspberry Pi, MacBo
 
 ## Usage
 ```
-pulse                    # launch dashboard
+pulse                    # launch TUI dashboard
+pulse --web              # web dashboard on :9100
+pulse --web --port 8888  # custom port
+pulse --once             # check once and exit
+pulse --once --json      # JSON output
+pulse --watch            # continuous checks (no TUI)
 pulse --config hosts.yaml # custom config
 pulse --once             # single check, no TUI (for scripts/cron)
 ```
