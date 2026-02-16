@@ -8,19 +8,72 @@ import (
 	"time"
 )
 
+// HostHistory tracks recent check results for sparkline display.
+type HostHistory struct {
+	Checks []bool    // true=up, false=down (newest last)
+	Times  []time.Time
+	Max    int
+}
+
+func NewHostHistory(max int) *HostHistory {
+	return &HostHistory{Max: max}
+}
+
+func (h *HostHistory) Add(online bool) {
+	h.Checks = append(h.Checks, online)
+	h.Times = append(h.Times, time.Now())
+	if len(h.Checks) > h.Max {
+		h.Checks = h.Checks[1:]
+		h.Times = h.Times[1:]
+	}
+}
+
+// UptimePercent returns the percentage of checks that were online.
+func (h *HostHistory) UptimePercent() float64 {
+	if len(h.Checks) == 0 {
+		return 0
+	}
+	up := 0
+	for _, c := range h.Checks {
+		if c {
+			up++
+		}
+	}
+	return float64(up) / float64(len(h.Checks)) * 100
+}
+
+// Sparkline returns a string of block chars representing uptime history.
+func (h *HostHistory) Sparkline() string {
+	var sb []byte
+	for _, c := range h.Checks {
+		if c {
+			sb = append(sb, 0xE2, 0x96, 0x88) // █ (full block)
+		} else {
+			sb = append(sb, 0xE2, 0x96, 0x91) // ░ (light shade)
+		}
+	}
+	return string(sb)
+}
+
 // WebServer serves a simple dashboard for Pulse host monitoring.
 type WebServer struct {
 	cfg     *Config
 	tracker *StateTracker
 	mu      sync.RWMutex
 	latest  []HostStatus
+	history map[string]*HostHistory // keyed by host name
 	port    int
 }
 
 func NewWebServer(cfg *Config, port int) *WebServer {
+	history := make(map[string]*HostHistory)
+	for _, h := range cfg.Hosts {
+		history[h.Name] = NewHostHistory(60)
+	}
 	return &WebServer{
 		cfg:     cfg,
 		tracker: NewStateTracker(cfg.Notify),
+		history: history,
 		port:    port,
 	}
 }
@@ -44,6 +97,11 @@ func (ws *WebServer) pollLoop() {
 		ws.mu.Lock()
 		ws.latest = results
 		ws.tracker.Update(results)
+		for _, r := range results {
+			if h, ok := ws.history[r.Config.Name]; ok {
+				h.Add(r.Online)
+			}
+		}
 		ws.mu.Unlock()
 		time.Sleep(time.Duration(ws.cfg.Interval) * time.Second)
 	}
@@ -56,7 +114,7 @@ func (ws *WebServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]jsonResult, len(results))
 	for i, r := range results {
-		out[i] = jsonResult{
+		jr := jsonResult{
 			Name:    r.Config.Label,
 			Host:    r.Config.Host,
 			Online:  r.Online,
@@ -67,6 +125,12 @@ func (ws *WebServer) handleAPI(w http.ResponseWriter, r *http.Request) {
 			Error:   r.Error,
 			CheckAt: r.LastCheck.Format(time.RFC3339),
 		}
+		if h, ok := ws.history[r.Config.Name]; ok && len(h.Checks) > 0 {
+			jr.Sparkline = h.Sparkline()
+			jr.UptimePercent = h.UptimePercent()
+			jr.CheckCount = len(h.Checks)
+		}
+		out[i] = jr
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -104,6 +168,9 @@ const dashboardHTML = `<!DOCTYPE html>
   .metric-label { font-size: 0.7rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
   .metric-value { font-size: 0.95rem; font-weight: 500; margin-top: 0.15rem; }
   .error-msg { color: #ef4444; font-size: 0.85rem; margin-top: 0.5rem; }
+  .sparkline { font-family: monospace; font-size: 0.6rem; letter-spacing: -1px; margin-top: 0.5rem; color: #22c55e; line-height: 1; }
+  .sparkline .down-char { color: #ef4444; }
+  .uptime-pct { font-size: 0.75rem; color: #888; margin-top: 0.25rem; }
   .footer { margin-top: 2rem; color: #555; font-size: 0.8rem; text-align: center; }
   .loading { text-align: center; padding: 3rem; color: #666; }
 </style>
@@ -131,6 +198,7 @@ async function refresh() {
           ${h.disk ? ` + "`" + `<div class="metric"><div class="metric-label">Disk</div><div class="metric-value">${h.disk}</div></div>` + "`" + ` : ''}
           ${h.uptime ? ` + "`" + `<div class="metric"><div class="metric-label">Uptime</div><div class="metric-value">${h.uptime}</div></div>` + "`" + ` : ''}
         </div>` + "`" + ` : ` + "`" + `<div class="error-msg">${h.error || 'Unreachable'}</div>` + "`" + `;
+      const sparkline = h.sparkline ? ` + "`" + `<div class="sparkline">${h.sparkline.split('').map(c => c === '█' ? c : ` + "`" + `<span class="down-char">${c}</span>` + "`" + `).join('')}</div><div class="uptime-pct">${h.uptime_percent.toFixed(1)}% uptime (${h.check_count} checks)</div>` + "`" + ` : '';
       return ` + "`" + `<div class="card ${cls}">
         <div class="card-header">
           <span class="host-name">${h.name}</span>
@@ -138,6 +206,7 @@ async function refresh() {
         </div>
         <div class="host-addr">${h.host}</div>
         ${metrics}
+        ${sparkline}
       </div>` + "`" + `;
     }).join('');
   } catch (e) {

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/jsnapoli1/pulse/internal/dispatch"
+	"github.com/jsnapoli1/pulse/internal/jira"
 )
 
 func main() {
@@ -75,8 +77,23 @@ func main() {
 		}
 	}
 
-	// TUI mode
-	m := initialModel(cfg, false)
+	// TUI mode — set up Jira + dispatch
+	jiraCfg := jira.Config{
+		URL:   envOrDefault("JIRA_URL", cfg.JiraURL),
+		Email: envOrDefault("JIRA_EMAIL", cfg.JiraEmail),
+		Token: envOrDefault("JIRA_API_TOKEN", cfg.JiraToken),
+	}
+	dispatchPath := cfg.DispatchFile
+	if dispatchPath == "" {
+		dispatchPath = dispatch.DefaultPath()
+	}
+	store, storeErr := dispatch.NewStore(dispatchPath)
+	if storeErr != nil {
+		fmt.Fprintf(os.Stderr, "Warning: dispatch store: %v\n", storeErr)
+		store = &dispatch.Store{}
+	}
+	jm := newJiraModel(jiraCfg, cfg.Hosts, store)
+	m := initialModel(cfg, false, jm)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -125,15 +142,25 @@ func printTable(results []HostStatus) {
 }
 
 type jsonResult struct {
-	Name    string `json:"name"`
-	Host    string `json:"host"`
-	Online  bool   `json:"online"`
-	CPU     string `json:"cpu,omitempty"`
-	Memory  string `json:"memory,omitempty"`
-	Disk    string `json:"disk,omitempty"`
-	Uptime  string `json:"uptime,omitempty"`
-	Error   string `json:"error,omitempty"`
-	CheckAt string `json:"checked_at"`
+	Name          string  `json:"name"`
+	Host          string  `json:"host"`
+	Online        bool    `json:"online"`
+	CPU           string  `json:"cpu,omitempty"`
+	Memory        string  `json:"memory,omitempty"`
+	Disk          string  `json:"disk,omitempty"`
+	Uptime        string  `json:"uptime,omitempty"`
+	Error         string  `json:"error,omitempty"`
+	CheckAt       string  `json:"checked_at"`
+	Sparkline     string  `json:"sparkline,omitempty"`
+	UptimePercent float64 `json:"uptime_percent,omitempty"`
+	CheckCount    int     `json:"check_count,omitempty"`
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func printJSON(results []HostStatus) {

@@ -24,9 +24,13 @@ type NotifyConfig struct {
 }
 
 type Config struct {
-	Interval int          `yaml:"interval"` // seconds
-	Hosts    []HostConfig `yaml:"hosts"`
-	Notify   NotifyConfig `yaml:"notify"`
+	Interval     int          `yaml:"interval"` // seconds
+	Hosts        []HostConfig `yaml:"hosts"`
+	Notify       NotifyConfig `yaml:"notify"`
+	JiraURL      string       `yaml:"jira_url"`
+	JiraEmail    string       `yaml:"jira_email"`
+	JiraToken    string       `yaml:"jira_token"`
+	DispatchFile string       `yaml:"dispatch_file"`
 }
 
 func defaultConfigPath() string {

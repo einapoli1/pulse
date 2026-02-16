@@ -39,6 +39,13 @@ var (
 			Padding(0, 1)
 )
 
+type viewTab int
+
+const (
+	tabHosts viewTab = iota
+	tabJira
+)
+
 type model struct {
 	config   *Config
 	hosts    []HostStatus
@@ -48,6 +55,8 @@ type model struct {
 	width    int
 	height   int
 	once     bool
+	tab      viewTab
+	jira     jiraModel
 }
 
 type checkDoneMsg struct {
@@ -56,7 +65,7 @@ type checkDoneMsg struct {
 
 type tickMsg time.Time
 
-func initialModel(cfg *Config, once bool) model {
+func initialModel(cfg *Config, once bool, jm jiraModel) model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("62"))
@@ -71,14 +80,19 @@ func initialModel(cfg *Config, once bool) model {
 		hosts:   hosts,
 		spinner: s,
 		once:    once,
+		jira:    jm,
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		m.runChecks(),
-	)
+	}
+	if jiraCmd := m.jira.Init(); jiraCmd != nil {
+		cmds = append(cmds, jiraCmd)
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) runChecks() tea.Cmd {
@@ -93,6 +107,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "tab":
+			if m.tab == tabHosts {
+				m.tab = tabJira
+			} else {
+				m.tab = tabHosts
+			}
+			return m, nil
+		case "1":
+			m.tab = tabHosts
+			return m, nil
+		case "2":
+			m.tab = tabJira
+			return m, nil
+		}
+		if m.tab == tabJira {
+			var cmd tea.Cmd
+			m.jira, cmd = m.jira.Update(msg)
+			return m, cmd
+		}
+		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -128,6 +162,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.jira.width = msg.Width
+		m.jira.height = msg.Height
+
+	// Forward Jira-specific messages
+	case jiraProjectsMsg, jiraIssuesMsg, jiraDispatchedMsg:
+		var cmd tea.Cmd
+		m.jira, cmd = m.jira.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -137,10 +179,24 @@ func (m model) View() string {
 	var b strings.Builder
 
 	title := titleStyle.Render(" ⚡ Pulse ")
-	if m.checking {
+	if m.checking && m.tab == tabHosts {
 		title += " " + m.spinner.View() + " checking..."
 	}
-	b.WriteString(title + "\n\n")
+
+	// Tab bar
+	hostsTab := dimStyle.Render(" 1:Hosts ")
+	jiraTab := dimStyle.Render(" 2:Jira ")
+	if m.tab == tabHosts {
+		hostsTab = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("62")).Render(" 1:Hosts ")
+	} else {
+		jiraTab = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15")).Background(lipgloss.Color("62")).Render(" 2:Jira ")
+	}
+	b.WriteString(title + "  " + hostsTab + jiraTab + "\n\n")
+
+	if m.tab == tabJira {
+		b.WriteString(m.jira.View())
+		return b.String()
+	}
 
 	for i, h := range m.hosts {
 		style := normalStyle
@@ -186,7 +242,7 @@ func (m model) View() string {
 		b.WriteString(style.Render(line) + "\n")
 	}
 
-	b.WriteString("\n" + dimStyle.Render("j/k:nav  r:refresh  q:quit"))
+	b.WriteString("\n" + dimStyle.Render("j/k:nav  r:refresh  tab/1/2:switch view  q:quit"))
 
 	return b.String()
 }
